@@ -1,0 +1,16 @@
+# Environment credentials
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Jupyter Checkpoints
+.ipynb_checkpoints/
+
+# OS artifacts
+Thumbs.db
+.DS_Store
