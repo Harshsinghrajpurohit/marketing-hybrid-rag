@@ -46,3 +46,7 @@
 ## 4. Key Learnings & Interview Talking Points (Living Notes)
 * *Why not rely solely on Dense Vector Search?* Dense embeddings compress 500 words into 768 floating-point numbers. In doing so, exact numbers (like "$119.58 billion") and specific codes get smoothed out. BM25 directly counts exact term frequency, making it essential for financial and enterprise document search.
 * *Why RRF instead of linear score combination?* Cosine similarity is bounded [0, 1] while BM25 is unbounded [0, $\infty$]. Adding them directly creates a biased, uncalibrated score. RRF relies exclusively on relative rank positions.
+## 5. Documentation & File Strategy
+* **Decision (confirmed 13-09-2026):** `Memory.md` is the **only** living/maintained document for this project.
+* The 5 spec documents suggested by `rules for a project.txt` (PRD.md, Architecture.md, Rules.md, Phases.md, Design.md) are **intentionally NOT created** — architecture, phases, and allowed-libraries live inside this Memory.md instead, keeping the repo minimal per the core philosophy ("minimal, observable, defensible code").
+* Any durable decision made during pair programming gets recorded here so context survives chat/tool switches.
