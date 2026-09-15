@@ -1,0 +1,37 @@
+﻿Total cells: 36
+  Cell 0 [MD]: # ≡ƒÜÇ Hybrid RAG System with Cross-Encoder Reranking & Evaluation
+  Cell 1 [MD]: ## Section 1: Why Hybrid RAG? (The Problem We Are Solving)
+  Cell 2 [MD]: ## Section 2: Environment & Dependency Verification
+  Cell 3 [CODE]: import os
+  Cell 4 [CODE]: import sys
+  Cell 5 [CODE]: # Verify Ollama Local LLM Connection
+  Cell 6 [CODE]: # Verify Pinecone Connection
+  Cell 7 [MD]: ## Section 3: Load Documents & Inspect Metadata
+  Cell 8 [CODE]: from langchain_community.document_loaders import PyPDFLoader
+  Cell 9 [MD]: Section 4 ΓÇö Text Chunking & Inspection
+  Cell 10 [CODE]: from langchain_text_splitters import RecursiveCharacterTextSplitter
+  Cell 11 [MD]: Step -5.1 Embegging of chunks
+  Cell 12 [CODE]: from langchain_ollama import OllamaEmbeddings
+  Cell 13 [MD]: Step 5.2- Index,embed , upsert(cell A
+  Cell 14 [CODE]: import time
+  Cell 15 [MD]: Step 5.3 ΓÇö First semantic query (Cell B)
+  Cell 16 [CODE]: query_vec = embeddings.embed_query("What were Apple's net sales in Q1 2024?")
+  Cell 17 [MD]: ## Section 6: BM25 ΓÇö Lexical Retrieval (The Sparse Arm)
+  Cell 18 [CODE]: 
+  Cell 19 [CODE]: #demo
+  Cell 20 [MD]: Dense VS BM25 Head-to-Head
+  Cell 21 [CODE]: def dense_search(query, top_k=3):
+  Cell 22 [MD]: ## Section 7: Reciprocal Rank Fusion (RRF)
+  Cell 23 [CODE]: def rrf(rankings, k=60):
+  Cell 24 [CODE]: #demo cell
+  Cell 25 [MD]: ## Section 8: Cross-Encoder Reranking
+  Cell 26 [CODE]: from flashrank import Ranker, RerankRequest
+  Cell 27 [CODE]: def rerank(query, candidates, top_n=3):
+  Cell 28 [MD]: ## Section 9: Grounded RAG Generation
+  Cell 29 [CODE]: from langchain_ollama import ChatOllama
+  Cell 30 [MD]: ## Section 10: Retrieval Evaluation ΓÇö Precision@K
+  Cell 31 [CODE]: ## Code cell 1 ΓÇö the test set (ground truth from the corpus we just browsed)
+  Cell 32 [CODE]: ## Code cell 2 ΓÇö metric + head-to-head runner
+  Cell 33 [CODE]: # ===== EXPERIMENT: header propagation, A/B in namespace "v2" =====
+  Cell 34 [MD]: Section 11 ΓÇö Faithfulness
+  Cell 35 [CODE]: import re

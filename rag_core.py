@@ -1,5 +1,6 @@
-# rag_core.py — hybrid RAG engine shared by the FastAPI (api.py) and Streamlit (ui.py) apps.
-# Extracted from hybrid_rag.ipynb (Sections 3-9). State built ONCE per process.
+# rag_core.py — hybrid RAG engine (Apple statements + MarTech 10-K narratives).
+# Fixes in v3: loads data/martech/*.txt, skips header-propagation for plain text,
+# and keeps the Pinecone vectors in their own namespace "app" (rebuildable).
 
 import os
 from dotenv import load_dotenv
@@ -10,12 +11,19 @@ DATA_FILES = [
     "data/apple_fy23_q4.pdf",
     "data/apple_fy23_q3.pdf",
 ]
+TEXT_FILES = [
+    "data/martech/salesforce.txt",
+    "data/martech/hubspot.txt",
+    "data/martech/adobe.txt",
+    "data/martech/twilio.txt",
+]
 PINECONE_INDEX = os.getenv("PINECONE_INDEX_NAME", "apple-hybrid-rag")
+NAMESPACE = "app"                     # all rag_core vectors live here
 OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
 LLM_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 
-_state = None  # module-level cache: built once, shared by every request
+_state = None
 
 
 def get_state():
@@ -26,40 +34,47 @@ def get_state():
 
 
 def _build_state():
-    # Heavy imports live HERE (lazy) so `import rag_core` / API startup stays fast (~2s).
-    # They only load once, on the FIRST /query, together with the expensive state build.
     from langchain_community.document_loaders import PyPDFLoader
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from rank_bm25 import BM25Okapi
     from langchain_ollama import OllamaEmbeddings, ChatOllama
     from pinecone import Pinecone
     from flashrank import Ranker, RerankRequest
+    from langchain_core.documents import Document
 
-    # 1) Load + clean + chunk (notebook Sections 3-4, incl. the $ glyph fix)
+
+    # 1) PDF pages (with the $ glyph fix) — keep FIRST so Apple chunk ids stay 0..60
     docs = []
     for path in DATA_FILES:
         for page in PyPDFLoader(path).load():
             page.page_content = page.page_content.replace("/dollarsign", "$")
             docs.append(page)
 
+    # 2) MarTech narratives — already-clean text, one "page" per file
+        for path in TEXT_FILES:
+          with open(path, encoding="utf-8", errors="replace") as f:
+            docs.append(Document(page_content=f.read(),
+                                 metadata={"source": path, "page": 0, "kind": "text"}))
+
+    # 3) Chunk everything uniformly
     splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=100)
     chunks = splitter.split_documents(docs)
 
-    # Header propagation — the retrieval fix that took P@3 from 0.00 to 0.28
+    # 4) Header propagation — ONLY for PDF pages (text files have no page headers)
     first = {}
     for cid, c in enumerate(chunks):
+        if c.metadata.get("kind") == "text":
+            continue
         key = (c.metadata["source"], c.metadata["page"])
         if key in first and cid != first[key]:
             c.page_content = chunks[first[key]].page_content + "\n" + c.page_content
         else:
             first[key] = cid
 
-    # 2) Dense arm         3) Sparse arm
+    # 5) Dense + sparse arms + reranker + LLM
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL)
     index = Pinecone(api_key=os.getenv("PINECONE_API_KEY")).Index(PINECONE_INDEX)
     bm25 = BM25Okapi([c.page_content.lower().split() for c in chunks])
-
-    # 4) Reranker + LLM
     ranker = Ranker(model_name="ms-marco-MiniLM-L-12-v2")
     llm = ChatOllama(model=LLM_MODEL, temperature=0.2, base_url=OLLAMA_URL)
 
@@ -67,9 +82,28 @@ def _build_state():
             "bm25": bm25, "ranker": ranker, "llm": llm}
 
 
+def build_index(batch=16):
+    """Embed every chunk and upsert into NAMESPACE. Run once after corpus changes."""
+        # Only wipe vectors if the namespace actually exists yet (serverless namespaces are lazy).
+    stats = state["index"].describe_index_stats()
+    if NAMESPACE in stats.namespaces:
+        state["index"].delete(delete_all=True, namespace=NAMESPACE)
+  # wipe stale ids
+    vecs = []
+    for cid, c in enumerate(state["chunks"]):
+        vec = state["embeddings"].embed_documents([c.page_content])[0]
+        vecs.append((f"chunk-{cid}", vec, c.metadata))
+        if len(vecs) >= batch:
+            state["index"].upsert(vectors=vecs, namespace=NAMESPACE)
+            vecs = []
+    if vecs:
+        state["index"].upsert(vectors=vecs, namespace=NAMESPACE)
+    print(f"Indexed {len(state['chunks'])} chunks into namespace '{NAMESPACE}'")
+
+
 def _dense(state, query, k=3):
     ms = state["index"].query(vector=state["embeddings"].embed_query(query),
-                              top_k=k, include_metadata=True).matches
+                              top_k=k, namespace=NAMESPACE, include_metadata=True).matches
     return [(int(m.id.split("-")[1]), m.score) for m in ms]
 
 
@@ -93,7 +127,7 @@ def _merge(state, query, k=3):
 
 
 def _rerank(state, query, candidates, top_n=3):
-    from flashrank import RerankRequest          # ← add this line
+    from flashrank import RerankRequest
     passages = [{"text": state["chunks"][i].page_content, "meta": i} for i in candidates]
     results = state["ranker"].rerank(RerankRequest(query=query, passages=passages))
     return [(int(r["meta"]), float(r["score"]), j + 1) for j, r in enumerate(results[:top_n])]
@@ -108,7 +142,7 @@ def answer(question, top_n=3):
         blocks.append(f"[{len(sources) + 1}] {state['chunks'][cid].page_content}")
         sources.append(f"{state['chunks'][cid].metadata['source']} — page {state['chunks'][cid].metadata['page']}")
 
-    prompt = f"""You are a financial analyst assistant. Answer ONLY from the context below.
+    prompt = f"""You are a marketing & business analyst assistant. Answer ONLY from the context below.
 Do not reproduce the provided context text.
 
 CONTEXT:
@@ -127,6 +161,7 @@ ANSWER:"""
 
 
 if __name__ == "__main__":
-    result = answer("What were Apple's total net sales for the three months ended December 30, 2023?")
+    build_index()                       # FIRST run: ~15-25 min, then all answers use it
+    result = answer("What is Salesforce's go-to-market strategy for its AI platform?")
     print("ANSWER:", result["answer"])
     print("SOURCES:", result["sources"])
