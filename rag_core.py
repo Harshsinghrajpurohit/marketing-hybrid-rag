@@ -5,13 +5,6 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from rank_bm25 import BM25Okapi
-from langchain_ollama import OllamaEmbeddings, ChatOllama
-from pinecone import Pinecone
-from flashrank import Ranker, RerankRequest
-
 DATA_FILES = [
     "data/apple_fy24_q1.pdf",
     "data/apple_fy23_q4.pdf",
@@ -33,6 +26,15 @@ def get_state():
 
 
 def _build_state():
+    # Heavy imports live HERE (lazy) so `import rag_core` / API startup stays fast (~2s).
+    # They only load once, on the FIRST /query, together with the expensive state build.
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from rank_bm25 import BM25Okapi
+    from langchain_ollama import OllamaEmbeddings, ChatOllama
+    from pinecone import Pinecone
+    from flashrank import Ranker, RerankRequest
+
     # 1) Load + clean + chunk (notebook Sections 3-4, incl. the $ glyph fix)
     docs = []
     for path in DATA_FILES:
@@ -91,6 +93,7 @@ def _merge(state, query, k=3):
 
 
 def _rerank(state, query, candidates, top_n=3):
+    from flashrank import RerankRequest          # ← add this line
     passages = [{"text": state["chunks"][i].page_content, "meta": i} for i in candidates]
     results = state["ranker"].rerank(RerankRequest(query=query, passages=passages))
     return [(int(r["meta"]), float(r["score"]), j + 1) for j, r in enumerate(results[:top_n])]
